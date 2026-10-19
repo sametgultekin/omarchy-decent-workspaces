@@ -86,10 +86,14 @@ BarWidget {
   // which only the monitors payload carries.
   readonly property var specialEvents: ["activespecial", "activespecialv2"]
 
+  // Only changes that can affect the client icons require a new snapshot.
+  readonly property var clientEvents: ["openwindow", "closewindow", "movewindow", "movewindowv2", "windowtitle", "windowtitlev2", "configreloaded", "activespecial", "activespecialv2"]
+
   Connections {
     target: Hyprland
     function onRawEvent(event) {
       var name = event.name
+      if (root.clientEvents.indexOf(name) !== -1) clientsDebounce.restart()
       if (root.windowEvents.indexOf(name) !== -1) {
         Hyprland.refreshToplevels()
         root.revision++
@@ -106,10 +110,67 @@ BarWidget {
   }
 
   // --- model ---------------------------------------------------------------
+  // Read authoritative clients instead of workspace.toplevels, whose cached
+  // entries can outlive closed windows. Keep the last good snapshot on errors.
+  property var liveClients: []
+  property bool clientsPending: false
+
+  function refreshClients() {
+    if (clientsProc.running) {
+      root.clientsPending = true
+      return
+    }
+    clientsProc.running = true
+  }
+
+  function clientsFor(workspace) {
+    if (!workspace) return []
+    var result = []
+    var seen = {}
+    for (var i = 0; i < root.liveClients.length; i++) {
+      var client = root.liveClients[i]
+      if (!client || !client.address || !client.workspace ||
+          client.workspace.id !== workspace.id || client.mapped === false ||
+          client.hidden === true || seen[client.address]) continue
+      seen[client.address] = true
+      result.push(client)
+    }
+    return result
+  }
+
   function hasWindows(workspace) {
-    if (!workspace) return false
-    var tops = workspace.toplevels ? workspace.toplevels.values : null
-    return !!tops && tops.length > 0
+    return root.clientsFor(workspace).length > 0
+  }
+
+  Timer {
+    id: clientsDebounce
+    // Coalesce bursts of events into one read; never runs while idle.
+    interval: 100
+    onTriggered: root.refreshClients()
+  }
+
+  Process {
+    id: clientsProc
+    command: ["hyprctl", "-j", "clients"]
+    onRunningChanged: {
+      if (!running && root.clientsPending) {
+        root.clientsPending = false
+        clientsDebounce.restart()
+      }
+    }
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var listed
+        try {
+          listed = JSON.parse(text)
+        } catch (e) {
+          return
+        }
+        if (!Array.isArray(listed)) return
+        root.liveClients = listed
+      }
+    }
   }
 
   // Hyprland reports the owning monitor as an object on the workspace and as a
@@ -151,7 +212,10 @@ BarWidget {
   }
 
   onRulesNeededChanged: if (root.rulesNeeded && !root.rulesLoaded) root.refreshRules()
-  Component.onCompleted: if (root.rulesNeeded) root.refreshRules()
+  Component.onCompleted: {
+    root.refreshClients()
+    if (root.rulesNeeded) root.refreshRules()
+  }
 
   function ruleMonitorMatches(spec, mine, mineDesc) {
     if (!spec) return false
@@ -359,7 +423,7 @@ BarWidget {
 
   function iconsFor(workspace) {
     if (!root.showIcons || !workspace) return ""
-    var tops = workspace.toplevels ? workspace.toplevels.values : null
+    var tops = root.clientsFor(workspace)
     if (!tops || tops.length === 0) return ""
 
     var shown = root.maxIcons > 0 ? Math.min(tops.length, root.maxIcons) : tops.length

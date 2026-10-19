@@ -114,6 +114,13 @@ omarchy plugin remove io.github.thetrueferret.decent-workspaces
 
 ## Development
 
+Run the client-model regression tests with Node.js (no QML runtime required):
+
+```bash
+node --test tests/clients.test.cjs
+```
+
+
 Editing a bar widget needs a shell restart — the "local plugin changed,
 reloading" hot reload does not rebuild bar surfaces:
 

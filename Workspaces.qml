@@ -87,13 +87,13 @@ BarWidget {
   readonly property var specialEvents: ["activespecial", "activespecialv2"]
 
   // Only changes that can affect the client icons require a new snapshot.
-  readonly property var clientEvents: ["openwindow", "closewindow", "movewindow", "movewindowv2", "windowtitle", "windowtitlev2", "configreloaded", "activespecial", "activespecialv2"]
+  readonly property var clientEvents: ["openwindow", "closewindow", "movewindow", "movewindowv2", "windowtitle", "windowtitlev2", "configreloaded", "activespecial", "activespecialv2", "workspace", "workspacev2", "pin", "togglegroup", "moveintogroup", "moveoutofgroup"]
 
   Connections {
     target: Hyprland
     function onRawEvent(event) {
       var name = event.name
-      if (root.clientEvents.indexOf(name) !== -1) clientsDebounce.restart()
+      if (root.clientEvents.indexOf(name) !== -1) root.scheduleClients()
       if (root.windowEvents.indexOf(name) !== -1) {
         Hyprland.refreshToplevels()
         root.revision++
@@ -115,6 +115,16 @@ BarWidget {
   property var liveClients: []
   property bool clientsPending: false
 
+  function scheduleClients() {
+    if (clientsProc.running) {
+      root.clientsPending = true
+    } else if (!clientsDebounce.running) {
+      // Do not postpone the deadline on every event: animated titles can
+      // otherwise prevent a snapshot indefinitely.
+      clientsDebounce.start()
+    }
+  }
+
   function refreshClients() {
     if (clientsProc.running) {
       root.clientsPending = true
@@ -126,12 +136,13 @@ BarWidget {
   function clientsFor(workspace) {
     if (!workspace) return []
     var result = []
+    // Hidden group tabs are still open windows and must retain their icons.
     var seen = {}
     for (var i = 0; i < root.liveClients.length; i++) {
       var client = root.liveClients[i]
       if (!client || !client.address || !client.workspace ||
           client.workspace.id !== workspace.id || client.mapped === false ||
-          client.hidden === true || seen[client.address]) continue
+          seen[client.address]) continue
       seen[client.address] = true
       result.push(client)
     }
@@ -155,7 +166,7 @@ BarWidget {
     onRunningChanged: {
       if (!running && root.clientsPending) {
         root.clientsPending = false
-        clientsDebounce.restart()
+        root.scheduleClients()
       }
     }
     stdout: StdioCollector {

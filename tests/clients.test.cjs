@@ -57,11 +57,11 @@ test('moves update source, destination and scratchpad occupancy', () => {
   assert.equal(root.hasWindows({ id: -99 }), true);
 });
 
-test('filters invalid, hidden, unmapped and duplicate clients', () => {
+test('filters invalid, unmapped and duplicate clients', () => {
   const root = model();
   root.liveClients = [null, {}, client('a', 1), client('a', 1),
     client('b', 1, 'app', { mapped: false }),
-    client('c', 1, 'app', { hidden: true }), client('d', 2)];
+    client('d', 2)];
   assert.equal(root.clientsFor({ id: 1 }).length, 1);
   assert.equal(root.hasWindows(null), false);
 });
@@ -76,4 +76,43 @@ test('icon limits and disabled icons retain their behavior', () => {
   root.showIcons = false;
   assert.equal(root.iconsFor({ id: 1 }), '');
   assert.equal(root.hasWindows({ id: 1 }), true);
+});
+
+
+test('hidden group tabs keep their icons and occupancy', () => {
+  const root = model();
+  root.liveClients = [client('a', 1, 'chat'),
+    client('b', 1, 'terminal', { hidden: true, grouped: ['a', 'b'] })];
+  assert.equal(root.iconsFor({ id: 1 }), 'chat terminal');
+  root.liveClients = [client('b', 1, 'terminal', { hidden: true })];
+  assert.equal(root.hasWindows({ id: 1 }), true);
+});
+
+test('event bursts cannot postpone an existing refresh deadline', () => {
+  let starts = 0;
+  const root = { clientsPending: false };
+  const clientsProc = { running: false };
+  const clientsDebounce = {
+    running: false,
+    start() { starts++; this.running = true; }
+  };
+  const context = vm.createContext({ root, clientsProc, clientsDebounce });
+  vm.runInContext(helper('scheduleClients'), context);
+  vm.runInContext(helper('refreshClients'), context);
+  for (let i = 0; i < 100; i++) context.scheduleClients();
+  assert.equal(starts, 1);
+  clientsDebounce.running = false;
+  context.refreshClients();
+  assert.equal(clientsProc.running, true);
+  for (let i = 0; i < 100; i++) context.scheduleClients();
+  assert.equal(root.clientsPending, true);
+  assert.equal(starts, 1, 'no concurrent refresh while query is running');
+  clientsProc.running = false;
+  // Exercise the same completion handler used by the QML Process.
+  const handler = source.match(/onRunningChanged: \{([\s\S]*?)\n    \}/)[1];
+  root.scheduleClients = context.scheduleClients;
+  context.running = false;
+  vm.runInContext(handler, context);
+  assert.equal(root.clientsPending, false);
+  assert.equal(starts, 2, 'one follow-up for events during the query');
 });

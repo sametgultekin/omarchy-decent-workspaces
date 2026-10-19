@@ -93,7 +93,7 @@ BarWidget {
     target: Hyprland
     function onRawEvent(event) {
       var name = event.name
-      if (root.clientEvents.indexOf(name) !== -1) root.scheduleClients()
+      if (root.clientEvents.indexOf(name) !== -1) clientsDebounce.start()
       if (root.windowEvents.indexOf(name) !== -1) {
         Hyprland.refreshToplevels()
         root.revision++
@@ -115,16 +115,6 @@ BarWidget {
   property var liveClients: []
   property bool clientsPending: false
 
-  function scheduleClients() {
-    if (clientsProc.running) {
-      root.clientsPending = true
-    } else if (!clientsDebounce.running) {
-      // Do not postpone the deadline on every event: animated titles can
-      // otherwise prevent a snapshot indefinitely.
-      clientsDebounce.start()
-    }
-  }
-
   function refreshClients() {
     if (clientsProc.running) {
       root.clientsPending = true
@@ -135,18 +125,11 @@ BarWidget {
 
   function clientsFor(workspace) {
     if (!workspace) return []
-    var result = []
-    // Hidden group tabs are still open windows and must retain their icons.
-    var seen = {}
-    for (var i = 0; i < root.liveClients.length; i++) {
-      var client = root.liveClients[i]
-      if (!client || !client.address || !client.workspace ||
-          client.workspace.id !== workspace.id || client.mapped === false ||
-          seen[client.address]) continue
-      seen[client.address] = true
-      result.push(client)
-    }
-    return result
+    // Hidden group tabs are still open windows and retain their icons.
+    return root.liveClients.filter(function(client) {
+      return client && client.workspace && client.workspace.id === workspace.id &&
+        client.mapped !== false
+    })
   }
 
   function hasWindows(workspace) {
@@ -155,7 +138,7 @@ BarWidget {
 
   Timer {
     id: clientsDebounce
-    // Coalesce bursts of events into one read; never runs while idle.
+    // start() leaves an existing deadline unchanged; no polling while idle.
     interval: 100
     onTriggered: root.refreshClients()
   }
@@ -166,7 +149,7 @@ BarWidget {
     onRunningChanged: {
       if (!running && root.clientsPending) {
         root.clientsPending = false
-        root.scheduleClients()
+        clientsDebounce.start()
       }
     }
     stdout: StdioCollector {

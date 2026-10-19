@@ -57,9 +57,9 @@ test('moves update source, destination and scratchpad occupancy', () => {
   assert.equal(root.hasWindows({ id: -99 }), true);
 });
 
-test('filters invalid, unmapped and duplicate clients', () => {
+test('filters invalid and unmapped clients', () => {
   const root = model();
-  root.liveClients = [null, {}, client('a', 1), client('a', 1),
+  root.liveClients = [null, {}, client('a', 1),
     client('b', 1, 'app', { mapped: false }),
     client('d', 2)];
   assert.equal(root.clientsFor({ id: 1 }).length, 1);
@@ -88,31 +88,22 @@ test('hidden group tabs keep their icons and occupancy', () => {
   assert.equal(root.hasWindows({ id: 1 }), true);
 });
 
-test('event bursts cannot postpone an existing refresh deadline', () => {
+test('events during a running query schedule one follow-up', () => {
   let starts = 0;
   const root = { clientsPending: false };
-  const clientsProc = { running: false };
-  const clientsDebounce = {
-    running: false,
-    start() { starts++; this.running = true; }
-  };
+  const clientsProc = { running: true };
+  const clientsDebounce = { start() { starts++; } };
   const context = vm.createContext({ root, clientsProc, clientsDebounce });
-  vm.runInContext(helper('scheduleClients'), context);
   vm.runInContext(helper('refreshClients'), context);
-  for (let i = 0; i < 100; i++) context.scheduleClients();
-  assert.equal(starts, 1);
-  clientsDebounce.running = false;
-  context.refreshClients();
-  assert.equal(clientsProc.running, true);
-  for (let i = 0; i < 100; i++) context.scheduleClients();
+  for (let i = 0; i < 100; i++) context.refreshClients();
   assert.equal(root.clientsPending, true);
-  assert.equal(starts, 1, 'no concurrent refresh while query is running');
+  assert.equal(starts, 0);
   clientsProc.running = false;
-  // Exercise the same completion handler used by the QML Process.
   const handler = source.match(/onRunningChanged: \{([\s\S]*?)\n    \}/)[1];
-  root.scheduleClients = context.scheduleClients;
   context.running = false;
   vm.runInContext(handler, context);
   assert.equal(root.clientsPending, false);
-  assert.equal(starts, 2, 'one follow-up for events during the query');
+  assert.equal(starts, 1);
+  context.refreshClients();
+  assert.equal(clientsProc.running, true);
 });
